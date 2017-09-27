@@ -1,17 +1,21 @@
 package org.ansj.elasticsearch.cat;
 
+import org.ansj.library.*;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeRequest;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeResponse;
-import org.elasticsearch.client.Client;
+import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Table;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.rest.RestChannel;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.RestResponse;
+import org.elasticsearch.rest.action.RestResponseListener;
 import org.elasticsearch.rest.action.cat.AbstractCatAction;
-import org.elasticsearch.rest.action.support.RestResponseListener;
+import org.nlpcn.commons.lang.util.StringUtil;
+
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * 分词的cat
@@ -19,29 +23,55 @@ import org.elasticsearch.rest.action.support.RestResponseListener;
  */
 public class AnalyzerCatAction extends AbstractCatAction {
 
-    @Inject
-    public AnalyzerCatAction(Settings settings, RestController controller, Client client) {
-        super(settings, controller, client);
+    public AnalyzerCatAction(Settings settings, RestController controller) {
+        super(settings);
         controller.registerHandler(RestRequest.Method.GET, "/_cat/analyze", this);
         controller.registerHandler(RestRequest.Method.GET, "/_cat/{index}/analyze", this);
     }
 
     @Override
-    protected void doRequest(final RestRequest request, RestChannel channel, Client client) {
+    protected RestChannelConsumer doCatRequest(RestRequest request, NodeClient client) {
         String[] texts = request.paramAsStringArrayOrEmptyIfAll("text");
+
         AnalyzeRequest analyzeRequest = new AnalyzeRequest(request.param("index"));
-        analyzeRequest.text(texts);
-        analyzeRequest.analyzer(request.param("analyzer"));
         analyzeRequest.field(request.param("field"));
-        analyzeRequest.tokenizer(request.param("tokenizer"));
-        analyzeRequest.tokenFilters(request.paramAsStringArray("token_filters", request.paramAsStringArray("filters", analyzeRequest.tokenFilters())));
-        analyzeRequest.charFilters(request.paramAsStringArray("char_filters", analyzeRequest.charFilters()));
-        client.admin().indices().analyze(analyzeRequest, new RestResponseListener<AnalyzeResponse>(channel) {
-            @Override
-            public RestResponse buildResponse(final AnalyzeResponse analyzeResponse) throws Exception {
-                return ChineseRestTable.buildResponse(buildTable(analyzeResponse, request), channel);
+
+        String tokenizer = request.param("tokenizer");
+        if (StringUtil.isNotBlank(tokenizer)) {
+            analyzeRequest.tokenizer(tokenizer);
+        }
+
+        if (texts == null || texts.length == 0) {
+            analyzeRequest.text("null");
+            analyzeRequest.analyzer("index_ansj");
+            return channel -> client.admin().indices().analyze(analyzeRequest, new RestResponseListener<AnalyzeResponse>(channel) {
+                @Override
+                public RestResponse buildResponse(final AnalyzeResponse analyzeResponse) throws Exception {
+                    return ChineseRestTable.response(channel,
+                            "err args example : /_cat/analyze?text=中国&analyzer=index_ansj, other params: [field,tokenizer,token_filters,char_filters]");
+                }
+            });
+        } else {
+            analyzeRequest.text(texts);
+            analyzeRequest.analyzer(request.param("analyzer"));
+
+            String[] filters = request.paramAsStringArray("token_filters", request.paramAsStringArray("filters", new String[0]));
+            for (String filter : filters) {
+                analyzeRequest.addTokenFilter(filter);
             }
-        });
+
+            filters = request.paramAsStringArray("char_filters", new String[0]);
+            for (String filter : filters) {
+                analyzeRequest.addCharFilter(filter);
+            }
+
+            return channel -> client.admin().indices().analyze(analyzeRequest, new RestResponseListener<AnalyzeResponse>(channel) {
+                @Override
+                public RestResponse buildResponse(final AnalyzeResponse analyzeResponse) throws Exception {
+                    return ChineseRestTable.buildResponse(buildTable(analyzeResponse, request), channel);
+                }
+            });
+        }
     }
 
     @Override
@@ -60,6 +90,15 @@ public class AnalyzerCatAction extends AbstractCatAction {
         table.addCell("type", "alias:t;desc:type;text-align:left");
         table.endHeaders();
         return table;
+    }
+
+    @Override
+    protected Set<String> responseParams() {
+        Set<String> responseParams = new HashSet<>(super.responseParams());
+        responseParams.addAll(Arrays.asList("text", "analyzer", "tokenizer", "type", "key",
+                "isNameRecognition", "isNumRecognition", "isQuantifierRecognition", "isRealName", "isSkipUserDefine",
+                CrfLibrary.DEFAULT, DicLibrary.DEFAULT, AmbiguityLibrary.DEFAULT, StopLibrary.DEFAULT, SynonymsLibrary.DEFAULT));
+        return responseParams;
     }
 
     private Table buildTable(final AnalyzeResponse analyzeResponse, final RestRequest request) {

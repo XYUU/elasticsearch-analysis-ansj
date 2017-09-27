@@ -1,44 +1,42 @@
 package org.ansj.elasticsearch.index.analysis;
 
 import org.ansj.elasticsearch.index.config.AnsjElasticConfigurator;
-import org.ansj.lucene5.AnsjAnalyzer;
-import org.ansj.lucene5.AnsjAnalyzer.TYPE;
+import org.ansj.lucene6.AnsjAnalyzer;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.assistedinject.Assisted;
+import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.env.Environment;
-import org.elasticsearch.index.Index;
+import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.analysis.AbstractIndexAnalyzerProvider;
-import org.elasticsearch.index.settings.IndexSettingsService;
+
+import java.util.Map;
 
 public class AnsjAnalyzerProvider extends AbstractIndexAnalyzerProvider<AnsjAnalyzer> {
 
-	private TYPE type;
+    private static final Logger LOG = Loggers.getLogger(AnsjAnalyzerProvider.class);
 
-	@Inject
-	public AnsjAnalyzerProvider(Index index, IndexSettingsService indexSettingsService, Environment env,
-			@Assisted String name, @Assisted Settings settings) {
-		super(index, indexSettingsService.getSettings(), name, settings);
+    private final AnsjAnalyzer analyzer;
 
-		String typeName = indexSettingsService.getSettings().get("index.analysis.analyzer." + name + ".type");
+    @Inject
+    public AnsjAnalyzerProvider(IndexSettings indexSettings, @Assisted String name, @Assisted Settings settings) {
+        super(indexSettings, name, settings);
 
-		if (typeName == null) {
-			typeName = settings.get("index.analysis.analyzer." + name + ".type");
-		}
+        Settings settings2 = indexSettings.getSettings().getAsSettings("index.analysis.tokenizer." + name());
 
-		if (typeName == null) {
-			AnsjElasticConfigurator.logger.error(
-					"index.analysis.analyzer.{}.type not setting! settings: {}  index_settings:{}" + name,
-					settings.getAsMap(), indexSettingsService.getSettings().getAsMap());
-		} else {
-			type = TYPE.valueOf(typeName.replace(AnsjAnalysis.SUFFIX, ""));
-		}
+        Map<String, String> args = settings2.getAsMap();
+        if (args.isEmpty()) {
+            args = AnsjElasticConfigurator.getDefaults();
+            args.put("type", name());
+        }
 
-	}
+        LOG.debug("instance analyzer settings : {}", args);
 
-	@Override
-	public AnsjAnalyzer get() {
-		return new AnsjAnalyzer(type, AnsjElasticConfigurator.filter);
-	}
+        analyzer = new AnsjAnalyzer(args);
+    }
 
+    @Override
+    public AnsjAnalyzer get() {
+        return analyzer;
+    }
 }

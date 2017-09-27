@@ -20,44 +20,39 @@
 package org.ansj.elasticsearch.index.analysis;
 
 import org.ansj.elasticsearch.index.config.AnsjElasticConfigurator;
-import org.ansj.lucene5.AnsjAnalyzer;
-import org.ansj.lucene5.AnsjAnalyzer.TYPE;
+import org.ansj.lucene6.AnsjAnalyzer;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.analysis.Tokenizer;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.assistedinject.Assisted;
+import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.Index;
+import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.analysis.AbstractTokenizerFactory;
-import org.elasticsearch.index.settings.IndexSettingsService;
+
+import java.util.Map;
 
 public class AnsjTokenizerTokenizerFactory extends AbstractTokenizerFactory {
 
-	private TYPE type;
+    private static final Logger LOG = Loggers.getLogger(AnsjTokenizerTokenizerFactory.class);
 
-	@Inject
-	public AnsjTokenizerTokenizerFactory(Index index, IndexSettingsService indexSettingsService, @Assisted String name,
-			@Assisted Settings settings) {
-		super(index, indexSettingsService.getSettings(), name, settings);
+    @Inject
+    public AnsjTokenizerTokenizerFactory(IndexSettings indexSettings, @Assisted String name, @Assisted Settings settings) {
+        super(indexSettings, name, settings);
+    }
 
-		String typeName = indexSettingsService.getSettings().get("index.analysis.tokenizer." + name + ".type");
+    @Override
+    public Tokenizer create() {
+        Settings settings = indexSettings.getSettings().getAsSettings("index.analysis.tokenizer." + name());
 
-		if (typeName == null) {
-			typeName = settings.get("index.analysis.tokenizer." + name + ".type");
-		}
+        Map<String, String> args = settings.getAsMap();
+        if (args.isEmpty()) {
+            args = AnsjElasticConfigurator.getDefaults();
+            args.put("type", name());
+        }
 
-		if (typeName == null) {
-			AnsjElasticConfigurator.logger.error(
-					"index.analysis.tokenizer.{}.type not setting! settings: {}  index_settings:{}", name,
-					settings.getAsMap(), indexSettingsService.getSettings().getAsMap());
-		} else {
-			type = TYPE.valueOf(typeName.replace(AnsjAnalysis.SUFFIX, ""));
-		}
+        LOG.debug("instance tokenizer settings : {}", args);
 
-	}
-
-	@Override
-	public Tokenizer create() {
-		return AnsjAnalyzer.getTokenizer(null, type, AnsjElasticConfigurator.filter);
-
-	}
+        return AnsjAnalyzer.getTokenizer(null, args);
+    }
 }

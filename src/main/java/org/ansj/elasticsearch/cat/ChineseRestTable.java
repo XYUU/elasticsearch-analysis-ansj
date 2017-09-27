@@ -33,308 +33,318 @@ import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.rest.*;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  */
 public class ChineseRestTable {
 
-	public static RestResponse buildResponse(Table table, RestChannel channel) throws Exception {
-		RestRequest request = channel.request();
-		XContentType xContentType = XContentType
-				.fromRestContentType(request.param("format", request.header("Content-Type")));
-		if (xContentType != null) {
-			return buildXContentBuilder(table, channel);
-		}
-		return buildTextPlainResponse(table, channel);
-	}
+    public static RestResponse buildResponse(Table table, RestChannel channel) throws Exception {
+        RestRequest request = channel.request();
+        XContentType xContentType = XContentType
+                .fromMediaTypeOrFormat(request.param("format", request.header("Content-Type")));
+        if (xContentType != null) {
+            return buildXContentBuilder(table, channel);
+        }
+        return buildTextPlainResponse(table, channel);
+    }
 
-	public static RestResponse buildXContentBuilder(Table table, RestChannel channel) throws Exception {
-		RestRequest request = channel.request();
-		XContentBuilder builder = channel.newBuilder();
-		List<DisplayHeader> displayHeaders = buildDisplayHeaders(table, request);
+    public static RestResponse response(RestChannel channel, String text) throws IOException {
+        try (UTF8StreamWriter out = new UTF8StreamWriter(); BytesStreamOutput bytesOut = channel.bytesOutput()) {
+            out.setOutput(bytesOut);
+            out.append(text);
+            return new BytesRestResponse(RestStatus.OK, BytesRestResponse.TEXT_CONTENT_TYPE, bytesOut.bytes());
+        }
+    }
 
-		builder.startArray();
-		for (int row = 0; row < table.getRows().size(); row++) {
-			builder.startObject();
-			for (DisplayHeader header : displayHeaders) {
-				builder.field(header.display, renderValue(request, table.getAsMap().get(header.name).get(row).value));
-			}
-			builder.endObject();
+    public static RestResponse response(RestChannel channel, Map<String, Object> map) throws IOException {
+        try (XContentBuilder builder = channel.newBuilder()) {
+            builder.map(map);
+            return new BytesRestResponse(RestStatus.OK, builder);
+        }
+    }
 
-		}
-		builder.endArray();
-		return new BytesRestResponse(RestStatus.OK, builder);
-	}
+    public static RestResponse buildXContentBuilder(Table table, RestChannel channel) throws Exception {
+        try (XContentBuilder builder = channel.newBuilder()) {
+            RestRequest request = channel.request();
+            List<DisplayHeader> displayHeaders = buildDisplayHeaders(table, request);
 
-	public static RestResponse buildTextPlainResponse(Table table, RestChannel channel) throws IOException {
-		RestRequest request = channel.request();
-		boolean verbose = request.paramAsBoolean("v", false);
+            builder.startArray();
+            for (int row = 0; row < table.getRows().size(); row++) {
+                builder.startObject();
+                for (DisplayHeader header : displayHeaders) {
+                    builder.field(header.display, renderValue(request, table.getAsMap().get(header.name).get(row).value));
+                }
+                builder.endObject();
+            }
+            builder.endArray();
+            return new BytesRestResponse(RestStatus.OK, builder);
+        }
+    }
 
-		List<DisplayHeader> headers = buildDisplayHeaders(table, request);
-		int[] width = buildWidths(table, request, verbose, headers);
+    public static RestResponse buildTextPlainResponse(Table table, RestChannel channel) throws IOException {
+        RestRequest request = channel.request();
+        boolean verbose = request.paramAsBoolean("v", false);
 
-		BytesStreamOutput bytesOut = channel.bytesOutput();
-		try (UTF8StreamWriter out = new UTF8StreamWriter()) {
-			out.setOutput(bytesOut);
-			if (verbose) {
-				for (int col = 0; col < headers.size(); col++) {
-					DisplayHeader header = headers.get(col);
-					pad(new Table.Cell(header.display, table.findHeaderByName(header.name)), width[col], request, out);
-					out.append("\t\t");
-				}
-				out.append("\n");
-			}
-			for (int row = 0; row < table.getRows().size(); row++) {
-				for (int col = 0; col < headers.size(); col++) {
-					DisplayHeader header = headers.get(col);
-					pad(table.getAsMap().get(header.name).get(row), width[col], request, out);
-					out.append("\t\t");
-				}
-				out.append("\n");
-			}
-		}
-		return new BytesRestResponse(RestStatus.OK, BytesRestResponse.TEXT_CONTENT_TYPE, bytesOut.bytes());
-	}
+        List<DisplayHeader> headers = buildDisplayHeaders(table, request);
+        int[] width = buildWidths(table, request, verbose, headers);
 
-	static List<DisplayHeader> buildDisplayHeaders(Table table, RestRequest request) {
-		List<DisplayHeader> display = new ArrayList<>();
-		if (request.hasParam("h")) {
-			Set<String> headers = expandHeadersFromRequest(table, request);
+        try (BytesStreamOutput bytesOut = channel.bytesOutput(); UTF8StreamWriter out = new UTF8StreamWriter().setOutput(bytesOut)) {
+            if (verbose) {
+                for (int col = 0; col < headers.size(); col++) {
+                    DisplayHeader header = headers.get(col);
+                    pad(new Table.Cell(header.display, table.findHeaderByName(header.name)), width[col], request, out);
+                    out.append("\t\t");
+                }
+                out.append("\n");
+            }
+            for (int row = 0; row < table.getRows().size(); row++) {
+                for (int col = 0; col < headers.size(); col++) {
+                    DisplayHeader header = headers.get(col);
+                    pad(table.getAsMap().get(header.name).get(row), width[col], request, out);
+                    out.append("\t\t");
+                }
+                out.append("\n");
+            }
+            return new BytesRestResponse(RestStatus.OK, BytesRestResponse.TEXT_CONTENT_TYPE, bytesOut.bytes());
+        }
+    }
 
-			for (String possibility : headers) {
-				DisplayHeader dispHeader = null;
+    private static List<DisplayHeader> buildDisplayHeaders(Table table, RestRequest request) {
+        List<DisplayHeader> display = new ArrayList<>();
+        if (request.hasParam("h")) {
+            Set<String> headers = expandHeadersFromRequest(table, request);
 
-				if (table.getAsMap().containsKey(possibility)) {
-					dispHeader = new DisplayHeader(possibility, possibility);
-				} else {
-					for (Table.Cell headerCell : table.getHeaders()) {
-						String aliases = headerCell.attr.get("alias");
-						if (aliases != null) {
-							for (String alias : Strings.splitStringByCommaToArray(aliases)) {
-								if (possibility.equals(alias)) {
-									dispHeader = new DisplayHeader(headerCell.value.toString(), alias);
-									break;
-								}
-							}
-						}
-					}
-				}
+            for (String possibility : headers) {
+                DisplayHeader dispHeader = null;
 
-				if (dispHeader != null) {
-					// We know we need the header asked for:
-					display.add(dispHeader);
+                if (table.getAsMap().containsKey(possibility)) {
+                    dispHeader = new DisplayHeader(possibility, possibility);
+                } else {
+                    for (Table.Cell headerCell : table.getHeaders()) {
+                        String aliases = headerCell.attr.get("alias");
+                        if (aliases != null) {
+                            for (String alias : Strings.splitStringByCommaToArray(aliases)) {
+                                if (possibility.equals(alias)) {
+                                    dispHeader = new DisplayHeader(headerCell.value.toString(), alias);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
 
-					// Look for accompanying sibling column
-					Table.Cell hcell = table.getHeaderMap().get(dispHeader.name);
-					String siblingFlag = hcell.attr.get("sibling");
-					if (siblingFlag != null) {
-						// ...link the sibling and check that its flag is set
-						String sibling = siblingFlag + "." + dispHeader.name;
-						Table.Cell c = table.getHeaderMap().get(sibling);
-						if (c != null && request.paramAsBoolean(siblingFlag, false)) {
-							display.add(new DisplayHeader(c.value.toString(), siblingFlag + "." + dispHeader.display));
-						}
-					}
-				}
-			}
-		} else {
-			for (Table.Cell cell : table.getHeaders()) {
-				String d = cell.attr.get("default");
-				if (Booleans.parseBoolean(d, true)) {
-					display.add(new DisplayHeader(cell.value.toString(), cell.value.toString()));
-				}
-			}
-		}
-		return display;
-	}
+                if (dispHeader != null) {
+                    // We know we need the header asked for:
+                    display.add(dispHeader);
 
-	/**
-	 * Extracts all the required fields from the RestRequest 'h' parameter. In
-	 * order to support wildcards like 'bulk.*' this needs potentially parse all
-	 * the configured headers and its aliases and needs to ensure that
-	 * everything is only added once to the returned headers, even if
-	 * 'h=bulk.*.bulk.*' is specified or some headers are contained twice due to
-	 * matching aliases
-	 */
-	private static Set<String> expandHeadersFromRequest(Table table, RestRequest request) {
-		Set<String> headers = new LinkedHashSet<>(table.getHeaders().size());
+                    // Look for accompanying sibling column
+                    Table.Cell hcell = table.getHeaderMap().get(dispHeader.name);
+                    String siblingFlag = hcell.attr.get("sibling");
+                    if (siblingFlag != null) {
+                        // ...link the sibling and check that its flag is set
+                        String sibling = siblingFlag + "." + dispHeader.name;
+                        Table.Cell c = table.getHeaderMap().get(sibling);
+                        if (c != null && request.paramAsBoolean(siblingFlag, false)) {
+                            display.add(new DisplayHeader(c.value.toString(), siblingFlag + "." + dispHeader.display));
+                        }
+                    }
+                }
+            }
+        } else {
+            for (Table.Cell cell : table.getHeaders()) {
+                String d = cell.attr.get("default");
+                if (Booleans.parseBoolean(d, true)) {
+                    display.add(new DisplayHeader(cell.value.toString(), cell.value.toString()));
+                }
+            }
+        }
+        return display;
+    }
 
-		// check headers and aliases
-		for (String header : Strings.splitStringByCommaToArray(request.param("h"))) {
-			if (Regex.isSimpleMatchPattern(header)) {
-				for (Table.Cell tableHeaderCell : table.getHeaders()) {
-					String configuredHeader = tableHeaderCell.value.toString();
-					if (Regex.simpleMatch(header, configuredHeader)) {
-						headers.add(configuredHeader);
-					} else if (tableHeaderCell.attr.containsKey("alias")) {
-						String[] aliases = Strings.splitStringByCommaToArray(tableHeaderCell.attr.get("alias"));
-						for (String alias : aliases) {
-							if (Regex.simpleMatch(header, alias)) {
-								headers.add(configuredHeader);
-								break;
-							}
-						}
-					}
-				}
-			} else {
-				headers.add(header);
-			}
-		}
+    /**
+     * Extracts all the required fields from the RestRequest 'h' parameter. In
+     * order to support wildcards like 'bulk.*' this needs potentially parse all
+     * the configured headers and its aliases and needs to ensure that
+     * everything is only added once to the returned headers, even if
+     * 'h=bulk.*.bulk.*' is specified or some headers are contained twice due to
+     * matching aliases
+     */
+    private static Set<String> expandHeadersFromRequest(Table table, RestRequest request) {
+        Set<String> headers = new LinkedHashSet<>(table.getHeaders().size());
 
-		return headers;
-	}
+        // check headers and aliases
+        for (String header : Strings.splitStringByCommaToArray(request.param("h"))) {
+            if (Regex.isSimpleMatchPattern(header)) {
+                for (Table.Cell tableHeaderCell : table.getHeaders()) {
+                    String configuredHeader = tableHeaderCell.value.toString();
+                    if (Regex.simpleMatch(header, configuredHeader)) {
+                        headers.add(configuredHeader);
+                    } else if (tableHeaderCell.attr.containsKey("alias")) {
+                        String[] aliases = Strings.splitStringByCommaToArray(tableHeaderCell.attr.get("alias"));
+                        for (String alias : aliases) {
+                            if (Regex.simpleMatch(header, alias)) {
+                                headers.add(configuredHeader);
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                headers.add(header);
+            }
+        }
 
-	public static int[] buildHelpWidths(Table table, RestRequest request) {
-		int[] width = new int[3];
-		for (Table.Cell cell : table.getHeaders()) {
-			String v = renderValue(request, cell.value);
-			int vWidth = v == null ? 0 : v.length();
-			if (width[0] < vWidth) {
-				width[0] = vWidth;
-			}
+        return headers;
+    }
 
-			v = renderValue(request, cell.attr.containsKey("alias") ? cell.attr.get("alias") : "");
-			vWidth = v == null ? 0 : v.length();
-			if (width[1] < vWidth) {
-				width[1] = vWidth;
-			}
+    public static int[] buildHelpWidths(Table table, RestRequest request) {
+        int[] width = new int[3];
+        for (Table.Cell cell : table.getHeaders()) {
+            String v = renderValue(request, cell.value);
+            int vWidth = v == null ? 0 : v.length();
+            if (width[0] < vWidth) {
+                width[0] = vWidth;
+            }
 
-			v = renderValue(request, cell.attr.containsKey("desc") ? cell.attr.get("desc") : "not available");
-			vWidth = v == null ? 0 : v.length();
-			if (width[2] < vWidth) {
-				width[2] = vWidth;
-			}
-		}
-		return width;
-	}
+            v = renderValue(request, cell.attr.containsKey("alias") ? cell.attr.get("alias") : "");
+            vWidth = v == null ? 0 : v.length();
+            if (width[1] < vWidth) {
+                width[1] = vWidth;
+            }
 
-	private static int[] buildWidths(Table table, RestRequest request, boolean verbose, List<DisplayHeader> headers) {
-		int[] width = new int[headers.size()];
-		int i;
+            v = renderValue(request, cell.attr.containsKey("desc") ? cell.attr.get("desc") : "not available");
+            vWidth = v == null ? 0 : v.length();
+            if (width[2] < vWidth) {
+                width[2] = vWidth;
+            }
+        }
+        return width;
+    }
 
-		if (verbose) {
-			i = 0;
-			for (DisplayHeader hdr : headers) {
-				int vWidth = hdr.display.length();
-				if (width[i] < vWidth) {
-					width[i] = vWidth;
-				}
-				i++;
-			}
-		}
+    private static int[] buildWidths(Table table, RestRequest request, boolean verbose, List<DisplayHeader> headers) {
+        int[] width = new int[headers.size()];
+        int i;
 
-		i = 0;
-		for (DisplayHeader hdr : headers) {
-			for (Table.Cell cell : table.getAsMap().get(hdr.name)) {
-				String v = renderValue(request, cell.value);
-				int vWidth = v == null ? 0 : v.length();
-				if (width[i] < vWidth) {
-					width[i] = vWidth;
-				}
-			}
-			i++;
-		}
-		return width;
-	}
+        if (verbose) {
+            i = 0;
+            for (DisplayHeader hdr : headers) {
+                int vWidth = hdr.display.length();
+                if (width[i] < vWidth) {
+                    width[i] = vWidth;
+                }
+                i++;
+            }
+        }
 
-	public static void pad(Table.Cell cell, int width, RestRequest request, UTF8StreamWriter out) throws IOException {
-		String sValue = renderValue(request, cell.value);
-		int length = sValue == null ? 0 : sValue.length();
-		byte leftOver = (byte) (width - length);
-		String textAlign = cell.attr.get("text-align");
-		if (textAlign == null) {
-			textAlign = "left";
-		}
-		if (leftOver > 0 && textAlign.equals("right")) {
-			for (byte i = 0; i < leftOver; i++) {
-				out.append(" ");
-			}
-			if (sValue != null) {
-				out.append(sValue);
-			}
-		} else {
-			if (sValue != null) {
-				out.append(sValue);
-			}
-			for (byte i = 0; i < leftOver; i++) {
-				out.append(" ");
-			}
-		}
-	}
+        i = 0;
+        for (DisplayHeader hdr : headers) {
+            for (Table.Cell cell : table.getAsMap().get(hdr.name)) {
+                String v = renderValue(request, cell.value);
+                int vWidth = v == null ? 0 : v.length();
+                if (width[i] < vWidth) {
+                    width[i] = vWidth;
+                }
+            }
+            i++;
+        }
+        return width;
+    }
 
-	private static String renderValue(RestRequest request, Object value) {
-		if (value == null) {
-			return null;
-		}
-		if (value instanceof ByteSizeValue) {
-			ByteSizeValue v = (ByteSizeValue) value;
-			String resolution = request.param("bytes");
-			if ("b".equals(resolution)) {
-				return Long.toString(v.bytes());
-			} else if ("k".equals(resolution)) {
-				return Long.toString(v.kb());
-			} else if ("m".equals(resolution)) {
-				return Long.toString(v.mb());
-			} else if ("g".equals(resolution)) {
-				return Long.toString(v.gb());
-			} else if ("t".equals(resolution)) {
-				return Long.toString(v.tb());
-			} else if ("p".equals(resolution)) {
-				return Long.toString(v.pb());
-			} else {
-				return v.toString();
-			}
-		}
-		if (value instanceof SizeValue) {
-			SizeValue v = (SizeValue) value;
-			String resolution = request.param("size");
-			if ("b".equals(resolution)) {
-				return Long.toString(v.singles());
-			} else if ("k".equals(resolution)) {
-				return Long.toString(v.kilo());
-			} else if ("m".equals(resolution)) {
-				return Long.toString(v.mega());
-			} else if ("g".equals(resolution)) {
-				return Long.toString(v.giga());
-			} else if ("t".equals(resolution)) {
-				return Long.toString(v.tera());
-			} else if ("p".equals(resolution)) {
-				return Long.toString(v.peta());
-			} else {
-				return v.toString();
-			}
-		}
-		if (value instanceof TimeValue) {
-			TimeValue v = (TimeValue) value;
-			String resolution = request.param("time");
-			if ("ms".equals(resolution)) {
-				return Long.toString(v.millis());
-			} else if ("s".equals(resolution)) {
-				return Long.toString(v.seconds());
-			} else if ("m".equals(resolution)) {
-				return Long.toString(v.minutes());
-			} else if ("h".equals(resolution)) {
-				return Long.toString(v.hours());
-			} else {
-				return v.toString();
-			}
-		}
-		// Add additional built in data points we can render based on request
-		// parameters?
-		return value.toString();
-	}
+    public static void pad(Table.Cell cell, int width, RestRequest request, UTF8StreamWriter out) throws IOException {
+        String sValue = renderValue(request, cell.value);
+        int length = sValue == null ? 0 : sValue.length();
+        byte leftOver = (byte) (width - length);
+        String textAlign = cell.attr.get("text-align");
+        if (textAlign == null) {
+            textAlign = "left";
+        }
+        if (leftOver > 0 && textAlign.equals("right")) {
+            for (byte i = 0; i < leftOver; i++) {
+                out.append(" ");
+            }
+            if (sValue != null) {
+                out.append(sValue);
+            }
+        } else {
+            if (sValue != null) {
+                out.append(sValue);
+            }
+            for (byte i = 0; i < leftOver; i++) {
+                out.append(" ");
+            }
+        }
+    }
 
-	static class DisplayHeader {
-		public final String name;
-		public final String display;
+    private static String renderValue(RestRequest request, Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof ByteSizeValue) {
+            ByteSizeValue v = (ByteSizeValue) value;
+            String resolution = request.param("bytes");
+            if ("b".equals(resolution)) {
+                return Long.toString(v.getBytes());
+            } else if ("k".equals(resolution)) {
+                return Long.toString(v.getKb());
+            } else if ("m".equals(resolution)) {
+                return Long.toString(v.getMb());
+            } else if ("g".equals(resolution)) {
+                return Long.toString(v.getGb());
+            } else if ("t".equals(resolution)) {
+                return Long.toString(v.getTb());
+            } else if ("p".equals(resolution)) {
+                return Long.toString(v.getPb());
+            } else {
+                return v.toString();
+            }
+        }
+        if (value instanceof SizeValue) {
+            SizeValue v = (SizeValue) value;
+            String resolution = request.param("size");
+            if ("b".equals(resolution)) {
+                return Long.toString(v.singles());
+            } else if ("k".equals(resolution)) {
+                return Long.toString(v.kilo());
+            } else if ("m".equals(resolution)) {
+                return Long.toString(v.mega());
+            } else if ("g".equals(resolution)) {
+                return Long.toString(v.giga());
+            } else if ("t".equals(resolution)) {
+                return Long.toString(v.tera());
+            } else if ("p".equals(resolution)) {
+                return Long.toString(v.peta());
+            } else {
+                return v.toString();
+            }
+        }
+        if (value instanceof TimeValue) {
+            TimeValue v = (TimeValue) value;
+            String resolution = request.param("time");
+            if ("ms".equals(resolution)) {
+                return Long.toString(v.millis());
+            } else if ("s".equals(resolution)) {
+                return Long.toString(v.seconds());
+            } else if ("m".equals(resolution)) {
+                return Long.toString(v.minutes());
+            } else if ("h".equals(resolution)) {
+                return Long.toString(v.hours());
+            } else {
+                return v.toString();
+            }
+        }
+        // Add additional built in data points we can render based on request
+        // parameters?
+        return value.toString();
+    }
 
-		DisplayHeader(String name, String display) {
-			this.name = name;
-			this.display = display;
-		}
-	}
+    static class DisplayHeader {
+        public final String name;
+        public final String display;
+
+        DisplayHeader(String name, String display) {
+            this.name = name;
+            this.display = display;
+        }
+    }
 }

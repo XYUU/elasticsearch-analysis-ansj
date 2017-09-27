@@ -2,7 +2,6 @@ package org.ansj.elasticsearch.action;
 
 import org.elasticsearch.ElasticsearchGenerationException;
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.support.QuerySourceBuilder;
 import org.elasticsearch.action.support.single.shard.SingleShardRequest;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.bytes.BytesArray;
@@ -13,6 +12,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -20,30 +20,30 @@ import java.util.Map;
  */
 public class AnsjRequest extends SingleShardRequest<AnsjRequest> {
 
-    private String type;
-    private String text;
+    private String path;
+
+    private Map<String, Object> args = new HashMap<>();
+
     private BytesReference source;
 
-    public AnsjRequest(){}
-
-    public String text() {
-        return text;
+    public AnsjRequest() {
     }
 
-    public AnsjRequest text(String text) {
-        this.text = text;
-        return this;
+    public AnsjRequest(String path) {
+        this.path = path;
     }
 
-    public String type() {
-        return type;
+    public String getPath() {
+        return path;
     }
 
-    public AnsjRequest type(String type) {
-        this.type = type;
-        return this;
+    public String get(String key) {
+        return (String) args.get(key);
     }
 
+    public String put(String key, String value) {
+        return (String) args.put(key, value);
+    }
 
     @Override
     public ActionRequestValidationException validate() {
@@ -53,26 +53,25 @@ public class AnsjRequest extends SingleShardRequest<AnsjRequest> {
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        type = in.readString();
-        text = in.readString();
+        path = in.readString();
+        args = in.readMap();
         source = in.readBytesReference();
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeString(type);
-        out.writeString(text);
+        out.writeString(path);
+        out.writeMap(args);
         out.writeBytesReference(source);
+    }
+
+    public Map<String, Object> asMap() {
+        return args;
     }
 
     public BytesReference source() {
         return source;
-    }
-
-    public AnsjRequest source(QuerySourceBuilder sourceBuilder) {
-        this.source = sourceBuilder.buildAsBytes(Requests.CONTENT_TYPE);
-        return this;
     }
 
     public AnsjRequest source(Map<String, ?> querySource) {
